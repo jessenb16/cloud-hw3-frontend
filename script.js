@@ -1,5 +1,9 @@
-// API Gateway URL - Replace with your actual API Gateway URL
-const API_GATEWAY_URL = 'YOUR_API_GATEWAY_URL_HERE';
+// API Gateway SDK Client - Replace with your actual API key
+const API_KEY = '94MfH0ZkQHMFfbCFTR5YaO8QdjMRHFe1Gy1UQQD9';
+const apigClient = apigClientFactory.newClient({
+    apiKey: API_KEY
+});
+
 // S3 Bucket URL - Replace with your actual S3 bucket URL (for constructing photo URLs)
 const S3_BUCKET_URL = 'YOUR_S3_BUCKET_URL_HERE';
 
@@ -27,32 +31,21 @@ searchForm.addEventListener('submit', async (e) => {
         return;
     }
 
-    // Validate API Gateway URL
-    if (API_GATEWAY_URL === 'YOUR_API_GATEWAY_URL_HERE') {
-        showStatus(searchStatus, 'Please configure API_GATEWAY_URL in script.js', 'error');
-        return;
-    }
-
     // Disable search button and show loading
     searchBtn.disabled = true;
     showStatus(searchStatus, 'Searching...', 'loading');
 
     try {
-        const response = await fetch(`${API_GATEWAY_URL}/search?q=${encodeURIComponent(query)}`, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
+        // Use API Gateway SDK
+        const result = await apigClient.searchGet({
+            q: query
+        }, {}, {});
 
-        if (!response.ok) {
-            throw new Error(`Search failed: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
+        // SDK returns result with data in result.data
+        const responseData = result.data;
         
         // Handle response - could be array directly or wrapped in an object
-        const photos = Array.isArray(data) ? data : (data.photos || data.results || []);
+        const photos = Array.isArray(responseData) ? responseData : (responseData.photos || responseData.results || []);
         
         displayResults(photos);
         
@@ -63,7 +56,20 @@ searchForm.addEventListener('submit', async (e) => {
         }
     } catch (error) {
         console.error('Search error:', error);
-        showStatus(searchStatus, `Search failed: ${error.message}`, 'error');
+        console.error('Error details:', {
+            message: error.message,
+            status: error.status,
+            statusText: error.statusText,
+            response: error.response?.data,
+            config: error.config
+        });
+        // Extract the actual error message from API Gateway response
+        const errorMessage = error.response?.data?.message || 
+                           error.response?.data?.error || 
+                           error.message || 
+                           error.status || 
+                           'Unknown error';
+        showStatus(searchStatus, `Search failed: ${errorMessage}`, 'error');
         displayResults([]);
     } finally {
         searchBtn.disabled = false;
@@ -77,12 +83,6 @@ uploadForm.addEventListener('submit', async (e) => {
     const file = photoFile.files[0];
     if (!file) {
         showStatus(uploadStatus, 'Please select a photo to upload', 'error');
-        return;
-    }
-
-    // Validate API Gateway URL
-    if (API_GATEWAY_URL === 'YOUR_API_GATEWAY_URL_HERE') {
-        showStatus(uploadStatus, 'Please configure API_GATEWAY_URL in script.js', 'error');
         return;
     }
 
@@ -107,28 +107,38 @@ uploadForm.addEventListener('submit', async (e) => {
     showStatus(uploadStatus, 'Uploading photo...', 'loading');
 
     try {
-        // Read file as binary data
-        const fileData = await readFileAsArrayBuffer(file);
+        // Generate objectKey (filename) for S3
+        // Use the file name, or generate a unique name if not available
+        const fileExtension = file.name.split('.').pop() || 'jpg';
+        const objectKey = file.name || `photo-${Date.now()}.${fileExtension}`;
         
-        // Prepare headers
-        const headers = {
-            'Content-Type': file.type || 'image/jpeg'
+        // IMPORTANT: API Gateway integration is configured with contentHandling: CONVERT_TO_BINARY,
+        // which means it EXPECTS a base64-encoded string and will decode it to binary before
+        // forwarding to S3. So here we send the image as base64 text.
+        const fileBase64 = await readFileAsBase64(file);
+        
+        // Prepare parameters for SDK
+        // objectKey is a query parameter, x-amz-meta-customLabels is a header (defined in swagger)
+        const params = {
+            objectKey: objectKey
         };
         
-        // Add custom labels header if provided
+        // Add custom labels header if provided (only if not empty)
+        // The SDK maps this based on swagger definition
         if (customLabelsHeader) {
-            headers['x-amz-meta-customLabels'] = customLabelsHeader;
+            params['x-amz-meta-customLabels'] = customLabelsHeader;
         }
+        
+        // Prepare additional params for Content-Type header
+        const additionalParams = {
+            headers: {
+                'Content-Type': file.type || 'image/jpeg'
+            }
+        };
 
-        const response = await fetch(`${API_GATEWAY_URL}/photos`, {
-            method: 'PUT',
-            headers: headers,
-            body: fileData
-        });
-
-        if (!response.ok) {
-            throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
-        }
+        // Use API Gateway SDK for upload - send base64 string as body
+        // API Gateway will base64-decode this into binary before calling S3
+        const result = await apigClient.photosPut(params, fileBase64, additionalParams);
 
         showStatus(uploadStatus, 'Photo uploaded successfully!', 'success');
         
@@ -142,7 +152,20 @@ uploadForm.addEventListener('submit', async (e) => {
         
     } catch (error) {
         console.error('Upload error:', error);
-        showStatus(uploadStatus, `Upload failed: ${error.message}`, 'error');
+        console.error('Error details:', {
+            message: error.message,
+            status: error.status,
+            statusText: error.statusText,
+            response: error.response?.data,
+            config: error.config
+        });
+        // Extract the actual error message from API Gateway response
+        const errorMessage = error.response?.data?.message || 
+                           error.response?.data?.error || 
+                           error.message || 
+                           error.status || 
+                           'Unknown error';
+        showStatus(uploadStatus, `Upload failed: ${errorMessage}`, 'error');
     } finally {
         uploadBtn.disabled = false;
     }
@@ -215,6 +238,27 @@ function readFileAsArrayBuffer(file) {
         reader.onload = (e) => resolve(e.target.result);
         reader.onerror = (e) => reject(new Error('Failed to read file'));
         reader.readAsArrayBuffer(file);
+    });
+}
+
+// Helper function to read file as base64 string (without data URL prefix)
+function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const result = e.target.result;
+            // result will be a data URL like "data:image/jpeg;base64,AAAA..."
+            if (typeof result === 'string') {
+                const commaIndex = result.indexOf(',');
+                if (commaIndex !== -1) {
+                    resolve(result.substring(commaIndex + 1));
+                    return;
+                }
+            }
+            reject(new Error('Failed to read file as base64'));
+        };
+        reader.onerror = () => reject(new Error('Failed to read file as base64'));
+        reader.readAsDataURL(file);
     });
 }
 
