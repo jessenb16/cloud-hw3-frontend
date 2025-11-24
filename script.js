@@ -44,8 +44,36 @@ searchForm.addEventListener('submit', async (e) => {
         // SDK returns result with data in result.data
         const responseData = result.data;
         
+        // Debug: Log the full result object to see structure
+        console.log('Full API result object:', result);
+        console.log('Result.data:', result.data);
+        console.log('Result.data type:', typeof result.data);
+        
+        // Debug: Log the raw response
+        console.log('Raw API response:', responseData);
+        console.log('Raw API response (stringified):', JSON.stringify(responseData));
+        
         // Handle response - could be array directly or wrapped in an object
         const photos = Array.isArray(responseData) ? responseData : (responseData.photos || responseData.results || []);
+        
+        // Debug: Log extracted photos
+        console.log('Extracted photos:', photos);
+        console.log('Number of photos:', photos.length);
+        if (photos.length > 0) {
+            console.log('First photo object:', photos[0]);
+            console.log('First photo URL:', photos[0].url);
+            console.log('First photo URL type:', typeof photos[0].url);
+            console.log('First photo URL length:', photos[0].url?.length);
+            
+            // More visible debugging - alert if URL exists
+            if (photos[0].url) {
+                console.log('✅ URL found:', photos[0].url.substring(0, 100) + '...');
+            } else {
+                console.error('❌ NO URL FOUND in photo object!');
+            }
+        } else {
+            console.warn('⚠️ No photos found in response');
+        }
         
         displayResults(photos);
         
@@ -193,9 +221,35 @@ function createPhotoElement(photo) {
     
     // Determine photo URL
     let photoUrl = '';
+    
+    // Debug: Log the photo object structure
+    console.log('Photo object in createPhotoElement:', photo);
+    console.log('Photo.url value:', photo.url);
+    console.log('Photo.url type:', typeof photo.url);
+    console.log('Photo.url is truthy:', !!photo.url);
+    
     if (photo.url) {
         // If URL is provided directly
-        photoUrl = photo.url;
+        photoUrl = String(photo.url).trim(); // Convert to string and trim
+        
+        // Check if URL is empty after trimming
+        if (!photoUrl) {
+            console.error('URL is empty or whitespace only');
+            photoUrl = 'https://via.placeholder.com/250?text=No+URL';
+        } else {
+            // Validate URL format - presigned URLs should start with http:// or https://
+            if (!photoUrl.match(/^https?:\/\//)) {
+                console.error('Invalid URL format (missing protocol):', photoUrl);
+                // Try to fix by adding https://
+                if (photoUrl.startsWith('//')) {
+                    photoUrl = 'https:' + photoUrl;
+                } else if (!photoUrl.includes('://')) {
+                    // If it looks like a hostname, add https://
+                    photoUrl = 'https://' + photoUrl;
+                }
+                console.log('Fixed URL:', photoUrl);
+            }
+        }
     } else if (photo.objectKey && photo.bucket) {
         // Construct URL from bucket and objectKey
         if (S3_BUCKET_URL !== 'YOUR_S3_BUCKET_URL_HERE') {
@@ -220,13 +274,86 @@ function createPhotoElement(photo) {
     // Get timestamp for display
     const timestamp = photo.createdTimestamp ? formatTimestamp(photo.createdTimestamp) : '';
     
-    div.innerHTML = `
-        <img src="${photoUrl}" alt="Photo" onerror="this.src='https://via.placeholder.com/250?text=Error+Loading+Image'">
-        <div class="photo-info">
-            ${timestamp ? `<div style="font-size: 0.8em; color: #999; margin-bottom: 5px;">${escapeHtml(timestamp)}</div>` : ''}
-            ${labelsHtml}
-        </div>
-    `;
+    // Debug: Log the photo URL being used with detailed info
+    console.log('Creating photo element with URL:', photoUrl);
+    console.log('URL type:', typeof photoUrl);
+    console.log('URL length:', photoUrl?.length);
+    console.log('URL starts with http:', photoUrl?.startsWith('http'));
+    console.log('URL first 100 chars:', photoUrl?.substring(0, 100));
+    console.log('URL last 50 chars:', photoUrl?.substring(Math.max(0, photoUrl.length - 50)));
+    
+    if (photoUrl) {
+        try {
+            const urlObj = new URL(photoUrl);
+            console.log('Parsed URL - protocol:', urlObj.protocol, 'hostname:', urlObj.hostname);
+            console.log('Parsed URL - full hostname:', urlObj.hostname);
+            
+            // Check if hostname can be resolved (this will help debug ERR_NAME_NOT_RESOLVED)
+            if (!urlObj.hostname || urlObj.hostname.length === 0) {
+                console.error('ERROR: URL hostname is empty!');
+            } else if (urlObj.hostname.includes(' ')) {
+                console.error('ERROR: URL hostname contains spaces!', urlObj.hostname);
+            }
+        } catch (e) {
+            console.error('URL parsing failed:', e.message, 'URL:', photoUrl);
+            console.error('URL substring around error:', photoUrl?.substring(0, 200));
+        }
+    }
+    
+    // Create image element using DOM methods to safely handle URLs
+    const img = document.createElement('img');
+    console.log('Setting img.src to:', photoUrl);
+    console.log('img.src before setting:', img.src);
+    img.src = photoUrl;
+    console.log('img.src after setting:', img.src);
+    console.log('img.src length:', img.src?.length);
+    console.log('img.src === photoUrl?', img.src === photoUrl);
+    img.alt = 'Photo';
+    img.onerror = function() {
+        console.error('❌ Image failed to load!');
+        console.error('Failed URL:', this.src);
+        console.error('Failed URL type:', typeof this.src);
+        console.error('Failed URL length:', this.src?.length);
+        console.error('Failed URL first 100 chars:', this.src?.substring(0, 100));
+        try {
+            const failedUrlObj = new URL(this.src);
+            console.error('Failed URL hostname:', failedUrlObj.hostname);
+        } catch (e) {
+            console.error('Failed to parse failed URL:', e.message);
+        }
+        this.src = 'https://via.placeholder.com/250?text=Error+Loading+Image';
+    };
+    img.onload = function() {
+        console.log('✅ Image loaded successfully!');
+        console.log('Loaded URL:', this.src);
+    };
+    
+    // Create info div
+    const infoDiv = document.createElement('div');
+    infoDiv.className = 'photo-info';
+    
+    if (timestamp) {
+        const timestampDiv = document.createElement('div');
+        timestampDiv.style.fontSize = '0.8em';
+        timestampDiv.style.color = '#999';
+        timestampDiv.style.marginBottom = '5px';
+        timestampDiv.textContent = timestamp;
+        infoDiv.appendChild(timestampDiv);
+    }
+    
+    if (labels.length > 0) {
+        const labelsDiv = document.createElement('div');
+        labelsDiv.className = 'photo-labels';
+        labels.forEach(label => {
+            const labelSpan = document.createElement('span');
+            labelSpan.textContent = label;
+            labelsDiv.appendChild(labelSpan);
+        });
+        infoDiv.appendChild(labelsDiv);
+    }
+    
+    div.appendChild(img);
+    div.appendChild(infoDiv);
     
     return div;
 }
