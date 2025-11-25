@@ -1,0 +1,14 @@
+version: 0.2
+
+phases:
+  build:
+    commands:
+      - echo "No build step required for static frontend"
+
+artifacts:
+  files:
+    - index.html
+    - script.js
+    - style.css
+    - swagger.yaml
+    - apiGateway-js-sdk/**/*   # include the SDK folder
